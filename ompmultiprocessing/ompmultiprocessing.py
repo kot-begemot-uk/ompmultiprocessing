@@ -1,12 +1,25 @@
-'''OMP Aware Multiprocessing drop in replacement for multiprocessing.Process()
+'''OMP Aware Multiprocessing manager for running multiprocessing.Process()
 Copyright (c) 2026 Red Hat Inc
 Copyright (c) 2026 Cambridge Greys Ltd
 '''
 
-import multiprocessing
 import subprocess
 import os
 import json
+
+def parse_mask(mask):
+    '''Expand a X-Y,Z list'''
+    result = []
+    for token in mask.split(","):
+        try:
+            start, finish = token.split("-")
+            if start > finish:
+                raise IndexError("Invalid Indexes for cpu ranges")
+            for cpu in range(int(start), int(finish) + 1):
+                result.append(cpu)
+        except ValueError:
+            result.append(token)
+    return set(result)
 
 
 
@@ -64,7 +77,6 @@ def produce_cpu_sublist(scpus, smt=True):
 
     return {"mask":set(mask), "available": True}
 
-
 def create_omp_places(resources, strategy, smt=True):
     '''Parse CPU topology and generate possible CPU masks'''
     omp_places = []
@@ -81,82 +93,39 @@ def create_omp_places(resources, strategy, smt=True):
 
     return omp_places
 
-class OMPProcess(multiprocessing.Process):
-    '''OMP aware process class'''
+
+# pylint: disable=too-few-public-methods
+class OMPProcessManager():
+    '''OMP aware wrapper to run mp Process()'''
     omp_places = []
-
-    def __init__(self, *args, **kwargs):
-
-        self.place = None
-        if kwargs.get("omp_auto_config", None) is None:
-            super().__init__(self, *args, **kwargs)
-
-        try:
-            strategy = kwargs["omp_strategy"]
-            smt = kwargs["omp_smt"]
-        except KeyError:
-            strategy = "nodes"
-            smt = False
-
-        if OMPProcess.omp_places is None:
-            resources = enumerate_resources()
-            OMPProcess.omp_places = create_omp_places(resources, strategy, smt=smt)
-
-        for place in OMPProcess.omp_places:
-            if place["available"]:
-                self.place = place
-                place["available"] = False
-                os.environ["OMP_PLACES"] = "{" + ",".join(list(place["mask"])) + "}"
-                # pylint: disable=consider-using-f-string
-                if os.environ.get("OMP_NUM_THREADS", None) is None:
-                    os.environ["OMP_NUM_THREADS"] = "{}".format(len(place["mask"]))
-                os.environ["OMP_PROC_BND"] = "True"
-
-        super().__init__(self, *args, **kwargs)
-
-    def join(self, *args, **kwargs):
-        '''Grab process termination handling and make the OMP place available again'''
-        if self.place is not None:
-            self.place["available"] = True
-        super().join(*args, **kwargs)
-
-    def close(self, *args, **kwargs):
-        '''Just in case someone is not using join to wait for the process'''
-        if self.place is not None:
-            self.place["available"] = True
-        super().close(*args, **kwargs)
-
-
-def parse_mask(mask):
-    '''Expand a X-Y,Z list'''
-    result = []
-    for token in mask.split(","):
-        try:
-            start, finish = token.split("-")
-            if start > finish:
-                raise IndexError("Invalid Indexes for cpu ranges")
-            for cpu in range(int(start), int(finish) + 1):
-                result.append(cpu)
-        except ValueError:
-            result.append(token)
-    return set(result)
-
-
-
-
-class OMPVLLMProcess(OMPProcess):
-    '''VLLM Specific class doing additional places split on "|" in the
-       VLLM_OMP_PROC_BIND environment variable'''
-    def __init__(self, *args, **kwargs):
+    def __init__(self, strategy="nodes", smt=False):
+        self.strategy = strategy
+        self.smt = smt
 
         vllm_mask = os.environ.get("VLLM_CPU_OMP_THREADS_BIND", None)
-        if vllm_mask is None or OMPProcess.omp_places is not None:
-            super().__init__(self, omp_auto_config=True, *args, **kwargs)
-        if vllm_mask == "nobind":
-            super().__init__(self, *args, **kwargs)
+        self.setup_omp = vllm_mask != "nobind"
+        if self.setup_omp and len(OMPProcessManager.omp_places) == 0:
+            if vllm_mask is not None:
+                masks = vllm_mask.split("|")
+            else:
+                masks = [None]
+            for mask in masks:
+                resources = enumerate_resources(mask)
+                OMPProcessManager.omp_places.extend(
+                    create_omp_places(resources, strategy, smt))
 
-        for mask in vllm_mask.split("|"):
-            resources = enumerate_resources(mask)
-            OMPProcess.omp_places.extend(create_omp_places(resources, "cores", smt=False))
-
-        super().__init__(self, *args, omp_auto_config=True, **kwargs)
+    def run(self, what, *args, **kwargs):
+        '''Run arg with correct OMP environment'''
+        if self.setup_omp:
+            for place in OMPProcessManager.omp_places:
+                if place["available"]:
+                    place["available"] = False
+                    # pylint: disable=consider-using-f-string
+                    os.environ["OMP_PLACES"] = "{}".format(place["mask"])
+                    if os.environ.get("OMP_NUM_THREADS", None) is None:
+                        # pylint: disable=consider-using-f-string
+                        os.environ["OMP_NUM_THREADS"] = "{}".format(len(place["mask"]))
+                    os.environ["OMP_PROC_BND"] = "True"
+                    return what(*args, **kwargs)
+            raise IndexError("Out of OMP places")
+        return what(*args, **kwargs)
