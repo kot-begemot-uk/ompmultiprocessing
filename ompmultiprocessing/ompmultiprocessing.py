@@ -22,27 +22,26 @@ def parse_mask(mask):
     return set(result)
 
 
-
-def enumerate_resources(mask = None):
+def enumerate_resources(resource_map, mask=None, allowed=None):
     '''Enumerate system resources'''
-    allowed = os.sched_getaffinity(0)
+    if allowed is None:
+        allowed = os.sched_getaffinity(0)
     if mask is not None:
         allowed = allowed & mask
     lscpu = {"cpus":{}, "cores":{}, "nodes":{}}
-    for cpu in json.loads(subprocess.run(["lscpu", "-Je"], check=True,
-                          capture_output=True).stdout)["cpus"]:
+    for cpu in resource_map["cpus"]:
         if cpu["cpu"] in allowed:
             lscpu["cpus"][cpu["cpu"]] = [cpu]
-        core = int(cpu["core"])
-        if lscpu["cores"].get(core, None) is None:
-            lscpu["cores"][core] = [cpu]
-        else:
-            lscpu["cores"][core].append(cpu)
-        node = int(cpu["node"])
-        if lscpu["nodes"].get(node, None) is None:
-            lscpu["nodes"][node] = [cpu]
-        else:
-            lscpu["nodes"][node].append(cpu)
+            core = int(cpu["core"])
+            if lscpu["cores"].get(core, None) is None:
+                lscpu["cores"][core] = [cpu]
+            else:
+                lscpu["cores"][core].append(cpu)
+            node = int(cpu["node"])
+            if lscpu["nodes"].get(node, None) is None:
+                lscpu["nodes"][node] = [cpu]
+            else:
+                lscpu["nodes"][node].append(cpu)
     return lscpu
 
 def produce_cpu_list(cpus, smt=True):
@@ -101,18 +100,25 @@ class OMPProcessManager():
     def __init__(self, strategy="nodes", smt=False):
         self.strategy = strategy
         self.smt = smt
-
+        omp_places = []
         vllm_mask = os.environ.get("VLLM_CPU_OMP_THREADS_BIND", None)
         self.setup_omp = vllm_mask != "nobind"
         if self.setup_omp and len(OMPProcessManager.omp_places) == 0:
             if vllm_mask is not None:
-                masks = vllm_mask.split("|")
+                masks = []
+                for spec in vllm_mask.split("|"):
+                    masks.append(parse_mask(spec))
             else:
                 masks = [None]
+            lscpu = json.loads(subprocess.run(
+                               ["lscpu", "-Je"], check=True,
+                               capture_output=True).stdout)
             for mask in masks:
-                resources = enumerate_resources(mask)
-                OMPProcessManager.omp_places.extend(
+                resources = enumerate_resources(lscpu, mask)
+                omp_places.extend(
                     create_omp_places(resources, strategy, smt))
+            OMPProcessManager.omp_places = sorted(
+                omp_places, key=lambda p: len(p["mask"]), reverse=True)
 
     def run(self, what, *args, **kwargs):
         '''Run arg with correct OMP environment'''
@@ -125,7 +131,7 @@ class OMPProcessManager():
                     if os.environ.get("OMP_NUM_THREADS", None) is None:
                         # pylint: disable=consider-using-f-string
                         os.environ["OMP_NUM_THREADS"] = "{}".format(len(place["mask"]))
-                    os.environ["OMP_PROC_BND"] = "True"
+                    os.environ["OMP_PROC_BIND"] = "TRUE"
                     return what(*args, **kwargs)
             raise IndexError("Out of OMP places")
         return what(*args, **kwargs)
