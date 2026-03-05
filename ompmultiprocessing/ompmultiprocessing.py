@@ -31,6 +31,7 @@ def enumerate_resources(resource_map, mask=None, allowed=None):
     lscpu = {"cpus":{}, "cores":{}, "nodes":{}}
     print(f"Allowed Mask: {allowed}")
     for cpu in resource_map["cpus"]:
+        print(f"CPU before check {cpu}")
         if cpu["cpu"] in allowed:
             print(f"Allowed CPU : {cpu}")
             lscpu["cpus"][cpu["cpu"]] = [cpu]
