@@ -116,8 +116,12 @@ class OMPProcessManager():
             else:
                 data = open(mock, mode="r", encoding="ascii").read()
             lscpu = json.loads(data)
+            print(f"Data:{lscpu}")
+            print(f"Masks:{masks}")
             for mask in masks:
                 resources = enumerate_resources(lscpu, mask, affinity)
+                print(f"Mask:{mask}")
+                print(f"Resource:{resources}")
                 omp_places.extend(
                     create_omp_places(resources, strategy, smt))
             self.omp_places = sorted(
