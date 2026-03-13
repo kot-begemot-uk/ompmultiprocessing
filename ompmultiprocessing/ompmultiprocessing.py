@@ -1,40 +1,41 @@
-'''OMP Aware Multiprocessing manager for running multiprocessing.Process()
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+"""OMP Aware Multiprocessing manager for running multiprocessing.Process()
 Copyright (c) 2026 Red Hat Inc
 Copyright (c) 2026 Cambridge Greys Ltd
-'''
+"""
 
-import subprocess
-import os
 import json
+import os
+import subprocess
+
 
 def parse_mask(mask):
-    '''Expand a X-Y,Z list'''
+    """Expand a X-Y,Z list"""
     result = []
     for token in mask.split(","):
         try:
             start, finish = token.split("-")
-            if start > finish:
+            if int(start) > int(finish):
                 raise IndexError("Invalid Indexes for cpu ranges")
             for cpu in range(int(start), int(finish) + 1):
                 result.append(cpu)
         except ValueError:
-            result.append(token)
+            result.append(int(token))
     return set(result)
 
 
 def enumerate_resources(resource_map, mask=None, allowed=None):
-    '''Enumerate system resources'''
+    """Enumerate system resources"""
     if allowed is None:
         allowed = os.sched_getaffinity(0)
     if mask is not None:
         allowed = allowed & mask
-    lscpu = {"cpus":{}, "cores":{}, "nodes":{}}
-    print(f"Allowed Mask : {allowed}")
+    lscpu: dict[str, dict] = {"cpus": {}, "cores": {}, "nodes": {}}
     for cpu in resource_map["cpus"]:
-        print(f"CPU before check {cpu}")
-        if int(cpu["cpu"]) in allowed:
-            print(f"Allowed CPU : {cpu}")
-            lscpu["cpus"][cpu["cpu"]] = [cpu]
+        cpunum = int(cpu["cpu"])
+        if cpunum in allowed:
+            lscpu["cpus"][cpunum] = [cpu]
             core = int(cpu["core"])
             if lscpu["cores"].get(core, None) is None:
                 lscpu["cores"][core] = [cpu]
@@ -47,9 +48,10 @@ def enumerate_resources(resource_map, mask=None, allowed=None):
                 lscpu["nodes"][node].append(cpu)
     return lscpu
 
+
 def produce_cpu_list(cpus, smt=True):
-    '''Produce a CPU list with/without SMT pairs - main cpu list case'''
-    mask = []
+    """Produce a CPU list with/without SMT pairs - main cpu list case"""
+    mask: list[int] = []
     for key, value in cpus.items():
         exists = False
         if not smt:
@@ -58,29 +60,31 @@ def produce_cpu_list(cpus, smt=True):
                     exists = True
                     break
         if not exists:
-            mask.append(key)
-    return {"mask":set(mask), "available": True}
+            mask.append(int(key))
+    return {"mask": set(mask), "available": True}
+
 
 def produce_cpu_sublist(scpus, smt=True):
-    '''Produce a CPU list with/without SMT pairs - resource leaf case'''
-    cpu_list = []
+    """Produce a CPU list with/without SMT pairs - resource leaf case"""
+    cpu_list: list[dict] = []
     for value in scpus:
         exists = False
         if not smt:
             for cpu in cpu_list:
-                if cpu["core"] == value["core"]:
+                if int(cpu["core"]) == int(value["core"]):
                     exists = True
                     break
         if not exists:
             cpu_list.append(value)
     mask = []
     for cpu in cpu_list:
-        mask.append(cpu["cpu"])
+        mask.append(int(cpu["cpu"]))
 
-    return {"mask":set(mask), "available": True}
+    return {"mask": set(mask), "available": True}
+
 
 def create_omp_places(resources, strategy, smt=True):
-    '''Parse CPU topology and generate possible CPU masks'''
+    """Parse CPU topology and generate possible CPU masks"""
     omp_places = []
     if strategy == "all":
         omp_places.append(produce_cpu_list(resources["cpus"], smt))
@@ -97,8 +101,9 @@ def create_omp_places(resources, strategy, smt=True):
 
 
 # pylint: disable=too-few-public-methods
-class OMPProcessManager():
-    '''OMP aware wrapper to run mp Process()'''
+class OMPProcessManager:
+    """OMP aware wrapper to run mp Process()"""
+
     def __init__(self, strategy="nodes", smt=False, mock=None, affinity=None):
         self.strategy = strategy
         self.smt = smt
@@ -114,20 +119,22 @@ class OMPProcessManager():
             else:
                 masks = [None]
             if mock is None:
-                data = subprocess.run(["lscpu", "-Je"], check=True,
-                                      capture_output=True).stdout
+                data = subprocess.run(
+                    ["lscpu", "-Je"], check=True, capture_output=True
+                ).stdout
             else:
-                data = open(mock, mode="r", encoding="ascii").read()
+                with open(mock, mode="rb") as jf:
+                    data = jf.read()
             lscpu = json.loads(data)
             for mask in masks:
                 resources = enumerate_resources(lscpu, mask, affinity)
-                omp_places.extend(
-                    create_omp_places(resources, strategy, smt))
+                omp_places.extend(create_omp_places(resources, strategy, smt))
             self.omp_places = sorted(
-                omp_places, key=lambda p: len(p["mask"]), reverse=True)
+                omp_places, key=lambda p: len(p["mask"]), reverse=True
+            )
 
     def run(self, what, *args, **kwargs):
-        '''Run arg with correct OMP environment'''
+        """Run arg with correct OMP environment"""
         if self.setup_omp:
             for place in self.omp_places:
                 if place["available"]:
