@@ -37,7 +37,7 @@ def test_simple():
     '''Test Simple Topology'''
     set_vllm_environment()
     kwargs = dict()
-    manager = OMPProcessManager(strategy="nodes", smt=False, mock="simple.json", affinity=set(range(0,6)))
+    manager = OMPProcessManager(strategy="nodes", smt=1, mock="simple.json", affinity=set(range(0,6)))
     kwargs["expected_places"] = str(set(range(0,6)))
     kwargs["expected_threads"] = 6
     manager.run(runnable, None, **kwargs)
@@ -46,7 +46,7 @@ def test_complex():
     '''Test Complex Topology'''
     set_vllm_environment()
     kwargs = dict()
-    manager = OMPProcessManager(strategy="nodes", smt=False, mock="numa.json", affinity=set(range(0,96)))
+    manager = OMPProcessManager(strategy="nodes", smt=1, mock="numa.json", affinity=set(range(0,96)))
     kwargs["expected_places"] = str(set(range(0,32)))
     kwargs["expected_threads"] = 32
     manager.run(runnable, None, **kwargs)
@@ -61,7 +61,7 @@ def test_mask():
     '''Test Complex Topology with a mask'''
     set_vllm_environment()
     kwargs = dict()
-    manager = OMPProcessManager(strategy="nodes", smt=False, mock="numa.json", affinity=set(range(32,96)))
+    manager = OMPProcessManager(strategy="nodes", smt=1, mock="numa.json", affinity=set(range(32,96)))
     assert(len(manager.omp_places) == 2)
     kwargs["expected_places"] = str(set(range(32,64)))
     kwargs["expected_threads"] = 32
@@ -74,7 +74,7 @@ def test_vllm_environment():
     '''Test VLLM topology environment variables'''
     set_vllm_environment("32-63|64-96")
     kwargs = dict()
-    manager = OMPProcessManager(strategy="nodes", smt=False, mock="numa.json", affinity=set(range(0,96)))
+    manager = OMPProcessManager(strategy="nodes", smt=1, mock="numa.json", affinity=set(range(0,96)))
     assert(len(manager.omp_places) == 2)
     kwargs["expected_places"] = str(set(range(32,64)))
     kwargs["expected_threads"] = 32
@@ -87,7 +87,7 @@ def test_vllm_environment_conflict():
     '''Test VLLM topology environment variables'''
     set_vllm_environment("32-63|64-96")
     kwargs = dict()
-    manager = OMPProcessManager(strategy="nodes", smt=False, mock="numa.json", affinity=set(range(0,64)))
+    manager = OMPProcessManager(strategy="nodes", smt=1, mock="numa.json", affinity=set(range(0,64)))
     assert(len(manager.omp_places) == 1)
     kwargs["expected_places"] = str(set(range(32,64)))
     kwargs["expected_threads"] = 32

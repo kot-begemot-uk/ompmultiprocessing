@@ -9,6 +9,16 @@ import json
 import os
 import subprocess
 
+def _int(arg):
+    """Relaxed parsing of ints which handles a - instead of a number.
+       The lscpu json may contain that for nodes in some cases. If that
+       is the case we parse it to zero
+    """
+    try:
+        return int(arg)
+    except ValueError:
+        pass
+    return 0
 
 def parse_mask(mask):
     """Expand a X-Y,Z list"""
@@ -36,12 +46,12 @@ def enumerate_resources(resource_map, mask=None, allowed=None):
         cpunum = int(cpu["cpu"])
         if cpunum in allowed:
             lscpu["cpus"][cpunum] = [cpu]
-            core = int(cpu["core"])
+            core = _int(cpu["core"])
             if lscpu["cores"].get(core, None) is None:
                 lscpu["cores"][core] = [cpu]
             else:
                 lscpu["cores"][core].append(cpu)
-            node = int(cpu["node"])
+            node = _int(cpu["node"])
             if lscpu["nodes"].get(node, None) is None:
                 lscpu["nodes"][node] = [cpu]
             else:
@@ -49,32 +59,30 @@ def enumerate_resources(resource_map, mask=None, allowed=None):
     return lscpu
 
 
-def produce_cpu_list(cpus, smt=True):
+def produce_cpu_list(cpus, smt=1):
     """Produce a CPU list with/without SMT pairs - main cpu list case"""
     mask: list[int] = []
     for key, value in cpus.items():
-        exists = False
-        if not smt:
-            for cpu in mask:
-                if cpu == value[0]["core"]:
-                    exists = True
-                    break
-        if not exists:
+        exists = 0
+        for cpu in mask:
+            if cpu == value[0]["core"]:
+                exists += 1
+                break
+        if exists < smt:
             mask.append(int(key))
     return {"mask": set(mask), "available": True}
 
 
-def produce_cpu_sublist(scpus, smt=True):
+def produce_cpu_sublist(scpus, smt=1):
     """Produce a CPU list with/without SMT pairs - resource leaf case"""
     cpu_list: list[dict] = []
     for value in scpus:
-        exists = False
-        if not smt:
-            for cpu in cpu_list:
-                if int(cpu["core"]) == int(value["core"]):
-                    exists = True
-                    break
-        if not exists:
+        exists = 0
+        for cpu in cpu_list:
+            if int(cpu["core"]) == int(value["core"]):
+                exists += 1
+                break
+        if exists < smt:
             cpu_list.append(value)
     mask = []
     for cpu in cpu_list:
@@ -104,7 +112,7 @@ def create_omp_places(resources, strategy, smt=True):
 class OMPProcessManager:
     """OMP aware wrapper to run mp Process()"""
 
-    def __init__(self, strategy="nodes", smt=False, mock=None, affinity=None):
+    def __init__(self, strategy="nodes", smt=1, mock=None, affinity=None):
         self.strategy = strategy
         self.smt = smt
         self.omp_places = []
